@@ -15,8 +15,8 @@
 1. SSE
 Реализована технология SSE для фильтров Собеля и вычисления модулей градиента
 
-    Naive implementation (no SSE) : Time [] seconds
-    SSE implementation : Time [] seconds
+    Naive implementation (no SSE) : Time [1.319] seconds
+    SSE implementation : Time [1.174] seconds
 
     Ubuntu 16.04
     System: Intel Pentium 3805U 1.90GHz, 4Gb
