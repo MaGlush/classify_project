@@ -33,13 +33,13 @@ cd ./build/bin
 echo
 echo "Training (SSE):"
 echo
-./task2 -d ../../data/multiclass/train_labels.txt -m model.txt --train --sse
+./task2 -d ../../data/multiclass/train_labels.txt -m model.txt --train -s
 
 # test classificator
 echo
 echo Predict:
 echo
-./task2 -d ../../data/multiclass/test_labels.txt -m model.txt -l predict.txt --predict --sse
+./task2 -d ../../data/multiclass/test_labels.txt -m model.txt -l predict.txt --predict -s
 
 cd ../..
 
