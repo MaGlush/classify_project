@@ -15,6 +15,11 @@ using std::cout;
 using std::cerr;
 using std::endl;
 
+/**
+@file features.cpp
+Документация в features.hpp
+*/
+
 Picture Transform(BMP* src) {
 	Picture res_image(src->TellWidth(),src->TellHeight());
 	for (uint i = 0; i < res_image.n_rows; i++) 
@@ -30,7 +35,7 @@ Picture Transform(BMP* src) {
 
 Image grayscale(BMP* src) {    
 	Image res_image(src->TellWidth(),src->TellHeight());
-	double Y;
+	float Y;
 	for (uint i = 0; i < res_image.n_rows; i++) 
 		for (uint j = 0; j < res_image.n_cols; j++) {
 			RGBApixel pixel = src->GetPixel(i,j);
@@ -72,9 +77,9 @@ void Partition(Image src,Image *cells,const int parts) {
 }
 
 Image sobel_x(Image src_image) {
-    Matrix<double> kernel = {{-1, 0, 1},
-                             {-2, 0, 2},
-                             {-1, 0, 1}};
+    Matrix<float> kernel = {{-1, 0, 1},
+                            {-2, 0, 2},
+                            {-1, 0, 1}};
     uint radius = (kernel.n_cols - 1) / 2;
     Image res_image(src_image.n_rows,src_image.n_cols);
     auto size = 2 * radius + 1;
@@ -97,8 +102,74 @@ Image sobel_x(Image src_image) {
     for (uint i = start_i; i < end_i; ++i) {
         for (uint j = start_j; j < end_j; ++j) {
             auto neighbourhood = border.submatrix(i-radius,j-radius,size,size);
-            double color = 0;
-            double sum = 0;
+            float color = 0;
+            float sum = 0;
+            for (uint hor = 0; hor < size; hor++)
+                for (uint ver = 0; ver < size; ver++) {
+                        color = neighbourhood(hor,ver);
+                        sum += color * kernel(hor,ver);
+                }
+            res_image(i-radius, j-radius) = sum;
+        }
+    }
+    return res_image;
+}
+
+Image sobel_x_sse(Image src_image) {
+    Matrix<float> kernel = {{-1, 0, 1},
+                            {-2, 0, 2},
+                            {-1, 0, 1}};
+    uint radius = (kernel.n_cols - 1) / 2;
+    Image res_image(src_image.n_rows,src_image.n_cols);
+    auto size = 2 * radius + 1;
+    const auto start_i = radius;
+    const auto end_i = src_image.n_rows + radius;
+    const auto start_j = radius;
+    const auto end_j = src_image.n_cols + radius;
+
+    const auto block_size = 4;
+    const auto crop_cols = res_image.n_cols % block_size;
+    const auto end_cols = res_image.n_cols - crop_cols + radius;
+
+    Image border(src_image.n_rows + 2*radius, src_image.n_cols + 2*radius);
+    for(ssize_t i = 0; i < border.n_rows; ++i) //mirror
+        for(ssize_t j = 0; j < border.n_cols; ++j){
+            auto x = i - radius;
+            auto y = j - radius;
+            if(x >= src_image.n_rows)
+                x = 2*(src_image.n_rows-1) - x;
+            if(y >= src_image.n_cols)
+                y = 2*(src_image.n_cols-1) - y;
+            border(i,j) = src_image(abs(x),abs(y));
+        }
+        //kernel matrix vectorization
+    __m128 kernel1 = _mm_setr_ps(kernel(0,0), kernel(0,1), kernel(0,2), 0); //first row
+    __m128 kernel2 = _mm_setr_ps(kernel(1,0), kernel(1,1), kernel(1,2), 0); //second row
+    __m128 kernel3 = _mm_setr_ps(kernel(2,0), kernel(2,1), kernel(2,2), 0); //third row
+    for (uint i = start_i; i < end_i; ++i) {
+        for (uint j = start_j; j < end_cols; ++j) {
+            auto neighbourhood = border.submatrix(i-radius,j-radius,size,size);
+                //load pixels           
+            __m128 row1 = _mm_setr_ps(neighbourhood(0,0), neighbourhood(0,1), neighbourhood(0,2), 0);
+            __m128 row2 = _mm_setr_ps(neighbourhood(1,0), neighbourhood(1,1), neighbourhood(1,2), 0); 
+            __m128 row3 = _mm_setr_ps(neighbourhood(2,0), neighbourhood(2,1), neighbourhood(2,2), 0); 
+                //multiply 
+            __m128 ker_row1 = _mm_mul_ps(kernel1, row1); //first row
+            __m128 ker_row2 = _mm_mul_ps(kernel2, row2); //second row
+            __m128 ker_row3 = _mm_mul_ps(kernel3, row3); //third row
+                //sum
+            __m128 ker_row12 = _mm_add_ps(ker_row1, ker_row2); // firts row + second row
+            __m128 ker_row123 = _mm_add_ps(ker_row12, ker_row3); // all rows sum - a|b|c|0
+            __m128 sum12 = _mm_hadd_ps(ker_row123, _mm_setzero_ps()); // a+b|c+0|0|0 
+            __m128 sum123 = _mm_hadd_ps(sum12, _mm_setzero_ps()); // a+b+c+0|0|0|0
+                //move sum value to res pixel
+            res_image(i-radius,j-radius) = _mm_cvtss_f32(sum123);
+        }
+            //processing remaining pixels
+        for(uint j = end_cols; j < end_j; ++j){
+            auto neighbourhood = border.submatrix(i-radius,j-radius,size,size);
+            float color = 0;
+            float sum = 0;
             for (uint hor = 0; hor < size; hor++)
                 for (uint ver = 0; ver < size; ver++) {
                         color = neighbourhood(hor,ver);
@@ -111,9 +182,9 @@ Image sobel_x(Image src_image) {
 }
 
 Image sobel_y(Image src_image) {
-    Matrix<double> kernel = {{ 1,  2,  1},
-                             { 0,  0,  0},
-                             {-1, -2, -1}};
+    Matrix<float> kernel = {{ 1,  2,  1},
+                            { 0,  0,  0},
+                            {-1, -2, -1}};
     uint radius = (kernel.n_cols - 1) / 2;
     Image res_image(src_image.n_rows,src_image.n_cols);
     auto size = 2 * radius + 1;
@@ -136,8 +207,8 @@ Image sobel_y(Image src_image) {
     for (uint i = start_i; i < end_i; ++i) {
         for (uint j = start_j; j < end_j; ++j) {
             auto neighbourhood = border.submatrix(i-radius,j-radius,size,size);
-            double color = 0;
-            double sum = 0;
+            float color = 0;
+            float sum = 0;
             for (uint hor = 0; hor < size; hor++)
                 for (uint ver = 0; ver < size; ver++) {
                         color = neighbourhood(hor,ver);
@@ -148,6 +219,73 @@ Image sobel_y(Image src_image) {
     }
     return res_image;
 }
+
+Image sobel_y_sse(Image src_image) {
+    Matrix<float> kernel = {{ 1,  2,  1},
+                            { 0,  0,  0},
+                            {-1, -2, -1}};
+    uint radius = (kernel.n_cols - 1) / 2;
+    Image res_image(src_image.n_rows,src_image.n_cols);
+    auto size = 2 * radius + 1;
+    const auto start_i = radius;
+    const auto end_i = src_image.n_rows + radius;
+    const auto start_j = radius;
+    const auto end_j = src_image.n_cols + radius;
+
+    const auto block_size = 4;
+    const auto crop_cols = res_image.n_cols % block_size;
+    const auto end_cols = res_image.n_cols - crop_cols + radius;
+
+    Image border(src_image.n_rows + 2*radius, src_image.n_cols + 2*radius);
+    for(ssize_t i = 0; i < border.n_rows; ++i) //mirror
+        for(ssize_t j = 0; j < border.n_cols; ++j){
+            auto x = i - radius;
+            auto y = j - radius;
+            if(x >= src_image.n_rows)
+                x = 2*(src_image.n_rows-1) - x;
+            if(y >= src_image.n_cols)
+                y = 2*(src_image.n_cols-1) - y;
+            border(i,j) = src_image(abs(x),abs(y));
+        }
+        //kernel matrix vectorization
+    __m128 kernel1 = _mm_setr_ps(kernel(0,0), kernel(0,1), kernel(0,2), 0); //first row
+    __m128 kernel2 = _mm_setr_ps(kernel(1,0), kernel(1,1), kernel(1,2), 0); //second row
+    __m128 kernel3 = _mm_setr_ps(kernel(2,0), kernel(2,1), kernel(2,2), 0); //third row
+    for (uint i = start_i; i < end_i; ++i) {
+        for (uint j = start_j; j < end_cols; ++j) {
+            auto neighbourhood = border.submatrix(i-radius,j-radius,size,size);
+                //load pixels           
+            __m128 row1 = _mm_setr_ps(neighbourhood(0,0), neighbourhood(0,1), neighbourhood(0,2), 0);
+            __m128 row2 = _mm_setr_ps(neighbourhood(1,0), neighbourhood(1,1), neighbourhood(1,2), 0); 
+            __m128 row3 = _mm_setr_ps(neighbourhood(2,0), neighbourhood(2,1), neighbourhood(2,2), 0); 
+                //multiply 
+            __m128 ker_row1 = _mm_mul_ps(kernel1, row1); //first row
+            __m128 ker_row2 = _mm_mul_ps(kernel2, row2); //second row
+            __m128 ker_row3 = _mm_mul_ps(kernel3, row3); //third row
+                //sum
+            __m128 ker_row12 = _mm_add_ps(ker_row1, ker_row2); // firts row + second row
+            __m128 ker_row123 = _mm_add_ps(ker_row12, ker_row3); // all rows sum - a|b|c|0
+            __m128 sum12 = _mm_hadd_ps(ker_row123, _mm_setzero_ps()); // a+b|c+0|0|0 
+            __m128 sum123 = _mm_hadd_ps(sum12, _mm_setzero_ps()); // a+b+c+0|0|0|0
+                //move sum value to res pixel
+            res_image(i-radius,j-radius) = _mm_cvtss_f32(sum123);
+        }
+            //processing remaining pixels
+        for(uint j = end_cols; j < end_j; ++j){
+            auto neighbourhood = border.submatrix(i-radius,j-radius,size,size);
+            float color = 0;
+            float sum = 0;
+            for (uint hor = 0; hor < size; hor++)
+                for (uint ver = 0; ver < size; ver++) {
+                        color = neighbourhood(hor,ver);
+                        sum += color * kernel(hor,ver);
+                }
+            res_image(i-radius, j-radius) = sum;
+        }
+    }
+    return res_image;
+}
+
 
 Image calc_gradient_direction(Image sobX, Image sobY) {
 	auto width = sobX.n_cols;
@@ -172,11 +310,50 @@ Image calc_gradient_absolution(Image sobX, Image sobY) {
 
 	return res_image;
 }
+Image calc_gradient_absolution_sse(Image sobX, Image sobY){
+    auto width = sobX.n_cols;
+	auto height = sobX.n_rows;
+    Image res_image(height, width);
+    const auto block_size = 4;
+    const auto crop_cols = res_image.n_cols % block_size;
+    const auto end_cols = res_image.n_cols - crop_cols;
+        //SSE processing
+    float *res_row_ptr = res_image._data.get();
+    float *hor_row_ptr = sobX._data.get();
+    float *ver_row_ptr = sobY._data.get();
+    float *res_ptr, *hor_ptr, *ver_ptr;
+	for(uint i = 0; i < res_image.n_rows; ++i){
+        res_ptr = res_row_ptr;
+        hor_ptr = hor_row_ptr;
+        ver_ptr = ver_row_ptr;
+        for(uint j = 0; j < end_cols; j+=block_size){
+            __m128 hor_block = _mm_loadu_ps(hor_ptr);
+            __m128 ver_block = _mm_loadu_ps(ver_ptr);
+            __m128 hh_block = _mm_mul_ps(hor_block, hor_block);
+            __m128 vv_block = _mm_mul_ps(ver_block, ver_block);            
+            __m128 res_block = _mm_add_ps(hh_block, vv_block);
+            res_block = _mm_sqrt_ps(res_block);
+            _mm_storeu_ps(res_ptr, res_block);
+            res_ptr += block_size;
+            hor_ptr += block_size;
+            ver_ptr += block_size;
+        }
+            //processing last pixels (no SSE)
+        for (uint j = end_cols; j < width; j++)
+			res_image(i,j) = sqrt( sqr(sobX(i,j)) + sqr(sobY(i,j)) );
+
+        res_row_ptr += res_image.stride;
+        hor_row_ptr += sobX.stride;
+        ver_row_ptr += sobY.stride;
+    }
+        
+    return res_image;
+}
 
 vector<float> calc_histogram(Image direct, Image absolut) {
 
 	const int segments = 32;
-	const double pi = 3.141592653;
+	const float pi = 3.141592653;
 	vector<float> res_histogram(segments, 0.0f);
 	for (uint i = 0; i < direct.n_rows; ++i)
 		for(uint j = 0; j < direct.n_cols; ++j){
@@ -220,8 +397,8 @@ vector<float> calc_lbl(Image src_image) {
         for (uint j = start_j; j < end_j; ++j) {
             auto neighbourhood = border.submatrix(i-radius,j-radius,size,size);
             vector<int> binary(8,0);
-            double elem = border(i,j);
-            double color = 0;
+            float elem = border(i,j);
+            float color = 0;
             for (uint hor = 0; hor < size; hor++)
                 for (uint ver = 0; ver < size; ver++) {
                         color = neighbourhood(hor,ver);
@@ -280,4 +457,33 @@ vector<float> calc_color(Picture src_image) {
 	}
 
     return color_hist;
+}
+
+float imgDif(Image image1, Image image2)
+{
+  assert((image1.n_rows == image2.n_rows) && (image1.n_cols == image2.n_cols));
+  auto width = image1.n_cols;
+  auto height = image1.n_rows;
+  float res = 0;
+  float pixel_res;
+
+  float *row_ptr1 = image1._data.get();
+  float *elem_ptr1;
+  float *row_ptr2 = image2._data.get();
+  float *elem_ptr2;
+  for (size_t row_idx = 0; row_idx < height; ++row_idx)
+  {
+    elem_ptr1 = row_ptr1;
+    elem_ptr2 = row_ptr2;
+    for (size_t col_idx = 0; col_idx < width; ++col_idx)
+    {
+      pixel_res = (*elem_ptr1 > *elem_ptr2) ? *elem_ptr1 - *elem_ptr2 : *elem_ptr2 - *elem_ptr1;
+      res = res > pixel_res ? res : pixel_res;
+      ++elem_ptr1;
+      ++elem_ptr2;
+    }
+    row_ptr1 ++;
+    row_ptr2 ++;
+  }
+  return res;
 }
