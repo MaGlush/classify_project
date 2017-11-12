@@ -1,0 +1,30 @@
+# Google test make lists | copying to ./tests/build
+
+# -std=c++11
+set (CMAKE_CXX_STANDARD 11)
+
+# set flags
+set( CMAKE_CXX_FLAGS "-msse4.1")
+
+# add include directories
+include_directories(../../include)
+include_directories(../../bridge/include)
+include_directories(../../src)
+
+set(HEADER_FILES 
+    ../../include/matrix.h ../../include/matrix.hpp ../../include/features.hpp 
+    ../../externals/liblinear-1.94/linear.h
+    ../../externals/EasyBMP/include/EasyBMP.h
+    ../../externals/argvparser/include/argvparser.h)
+
+
+# Locate GTest
+cmake_minimum_required(VERSION 2.6)
+find_package(GTest REQUIRED)
+include_directories(${GTEST_INCLUDE_DIRS})
+# add externals libs
+link_directories(../../bridge/lib)
+
+# Link runTests with what we want to test and the GTest and pthread library
+add_executable(runTests ../test_main.cpp ${HEADER_FILES})
+target_link_libraries(runTests ${GTEST_LIBRARIES} pthread easybmp argvparser linear) 
