@@ -16,16 +16,18 @@
 
 Реализована технология SSE для фильтров Собеля и вычисления модулей градиента
 
-    Naive implementation (no SSE) : Time [1.319] seconds
+    Naive implementation : Time [1.319] seconds
     SSE implementation : Time [1.174] seconds
 
     Ubuntu 16.04
     System: Intel Pentium 3805U 1.90GHz, 4Gb
 
 2. Google Test framework
+
 Выполнено тестирование с помощью утилиты googletest 
 
 3. Doxygen
+
 Документирование с помощью doxygen
 
 ## Сборка и запуск    
