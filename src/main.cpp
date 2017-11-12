@@ -4,6 +4,7 @@
 #include <cassert>
 #include <iostream>
 #include <cmath>
+#include <stdint.h>
 
 #include "classifier.h"
 #include "EasyBMP.h"
@@ -27,8 +28,20 @@ typedef vector<pair<BMP*, int> > TDataSet;
 typedef vector<pair<string, int> > TFileList;
 typedef vector<pair<vector<float>, int> > TFeatures;
 
-// Load list of files and its labels from 'data_file' and
-// stores it in 'file_list'
+/**
+@mainpage Классификация объектов с использованием SSE
+@author Проект выполнила Глущенко Майя | 322 группа
+*/
+
+/**
+@file main.cpp
+*/
+
+/**
+@function LoadFileList
+загружает список файлов и их меток классов из 'data_file' и записывает их в 'file_list'
+@param[in] data_file хранит пути к файлам и метки классов
+@param[out] file_list - вектор <путь к файлу, метка>*/
 void LoadFileList(const string& data_file, TFileList* file_list) {
     ifstream stream(data_file.c_str());
 
@@ -50,7 +63,11 @@ void LoadFileList(const string& data_file, TFileList* file_list) {
     stream.close();
 }
 
-// Load images by list of files 'file_list' and store them in 'data_set'
+/**
+@function LoadImages
+загружает список файлов изображения из 'file_list' и сохраняет их в 'data_set' 
+@param[in] file_list - вектор <путь к файлу, метка>
+@param[out] data_set - вектор <указатель на изображение, метка> */
 void LoadImages(const TFileList& file_list, TDataSet* data_set) {
     for (size_t img_idx = 0; img_idx < file_list.size(); ++img_idx) {
             // Create image
@@ -62,7 +79,12 @@ void LoadImages(const TFileList& file_list, TDataSet* data_set) {
     }
 }
 
-// Save result of prediction to file
+/**
+@function SavePredictions 
+сохраняет предсказанный результат в файл 
+@param[in] file_list - вектор <путь к файлу, метка>
+@param[in] labels - вектор <метка> 
+@param[out] prediction_file - выходной текстовый файл, хранящий предсказания классификатора*/
 void SavePredictions(const TFileList& file_list,
                      const TLabels& labels, 
                      const string& prediction_file) {
@@ -77,8 +99,15 @@ void SavePredictions(const TFileList& file_list,
     stream.close();
 }
 
-
+/**
+@function ExtractFeatures
+извлекает признаки из 'data_set'. Здесь обрабатываются все изображения из 'data_set' для дальнейшего построения 
+гистограммы 'features' для того, чтобы обучить модель и предсказать результат
+@param[in] data_set - вектор <BMP* image, int label> 
+@param[out] features - вектор <vector<float>, int labels> */
 void ExtractFeatures(const TDataSet& data_set, TFeatures* features) {
+    Timer t;
+    t.start();
     for (size_t image_idx = 0; image_idx < data_set.size(); ++image_idx) {
         BMP* image = data_set[image_idx].first;
         int label = data_set[image_idx].second;
@@ -109,9 +138,56 @@ void ExtractFeatures(const TDataSet& data_set, TFeatures* features) {
         }
         features->push_back(make_pair(HOG, label));
     }
+     t.check("Naive implementation");
+     t.stop();
 }
 
-// Clear dataset structure
+/**
+@function ExtractFeaturesSSE
+аналогично ExtractFeatures() извлекает признаки из 'data_set', но с использованием SSE
+@param[in] data_set - вектор <BMP* image, int label> 
+@param[out] features - вектор <vector<float>, int labels> */
+void ExtractFeaturesSSE(const TDataSet& data_set, TFeatures* features) {
+    Timer t;
+    t.start();
+    for (size_t image_idx = 0; image_idx < data_set.size(); ++image_idx) {
+        BMP* image = data_set[image_idx].first;
+        int label = data_set[image_idx].second;
+        Image res_image = grayscale(image);
+        const int parts = 64;
+        Image pictures[parts];
+        Picture pictures_color[parts];
+        Picture color_pict = Transform(image);
+        Partition_color(color_pict,pictures_color,parts);
+        Partition(res_image,pictures,parts);
+
+        vector<float> HOG;
+        for(int i = 0; i < parts; ++i) {
+            Image sobX = sobel_x_sse(pictures[i]);
+            Image sobY = sobel_y_sse(pictures[i]);
+
+            Image direct = calc_gradient_direction(sobX,sobY);
+            Image absolut = calc_gradient_absolution_sse(sobX,sobY);
+
+            vector<float> current_histogram = calc_histogram(direct, absolut);
+            vector<float> current_lbl = calc_lbl(pictures[i]);
+            vector<float> current_color = calc_color(pictures_color[i]);
+
+            //конкатенация с ранее подсчитаннымм гистограммами
+            HOG.insert(HOG.end(), current_histogram.begin(), current_histogram.end());
+            //HOG.insert(HOG.end(), current_lbl.begin(), current_lbl.end());
+            HOG.insert(HOG.end(), current_color.begin(), current_color.end());
+        }
+        features->push_back(make_pair(HOG, label));
+    }
+    t.check("SSE implementation");
+    t.stop();
+}
+
+/**
+@function ClearDataset
+очищает стуктуру 'data_set'
+@param data_set is vector of <BMP* image, int label> */
 void ClearDataset(TDataSet* data_set) {
         // Delete all images from dataset
     for (size_t image_idx = 0; image_idx < data_set->size(); ++image_idx)
@@ -120,9 +196,13 @@ void ClearDataset(TDataSet* data_set) {
     data_set->clear();
 }
 
-// Train SVM classifier using data from 'data_file' and save trained model
-// to 'model_file'
-void TrainClassifier(const string& data_file, const string& model_file) {
+/**
+@function TrainClassifier
+обучает классификатор, используя данные из 'data_file' и сохраняет обученную модель в 'model_file'
+@param[in] data_set - вектор <BMP* image, int label>
+@param[out] model_file - выходной файл, хранящий информацию об обученной модели
+@param[in] sse_flag - логическая переменная, показывающая тип последующей обработки */
+void TrainClassifier(const string& data_file, const string& model_file, bool sse_flag) {
         // List of image file names and its labels
     TFileList file_list;
         // Structure of images and its labels
@@ -139,7 +219,10 @@ void TrainClassifier(const string& data_file, const string& model_file) {
         // Load images
     LoadImages(file_list, &data_set);
         // Extract features from images
-    ExtractFeatures(data_set, &features);
+    if(sse_flag)
+        ExtractFeaturesSSE(data_set, &features);
+    else
+        ExtractFeatures(data_set, &features);
 
         // PLACE YOUR CODE HERE
         // You can change parameters of classifier here
@@ -153,11 +236,15 @@ void TrainClassifier(const string& data_file, const string& model_file) {
     ClearDataset(&data_set);
 }
 
-// Predict data from 'data_file' using model from 'model_file' and
-// save predictions to 'prediction_file'
+/**
+@function PredictData
+предсказывает классы данных из 'data_file', используя модель из 'model_file', сохраняет предсказания в 'prediction_file'
+@param[in] data_set - вектор <BMP* image, int label>
+@param[out] model_file - выходной файл, хранящий информацию об обученной модели
+@param[in] sse_flag - логическая переменная, показывающая тип последующей обработки */
 void PredictData(const string& data_file,
                  const string& model_file,
-                 const string& prediction_file) {
+                 const string& prediction_file, bool sse_flag) {
         // List of image file names and its labels
     TFileList file_list;
         // Structure of images and its labels
@@ -172,7 +259,10 @@ void PredictData(const string& data_file,
         // Load images
     LoadImages(file_list, &data_set);
         // Extract features from images
-    ExtractFeatures(data_set, &features);
+    if(sse_flag)
+        ExtractFeaturesSSE(data_set, &features);
+    else
+        ExtractFeatures(data_set, &features);
 
         // Classifier 
     TClassifier classifier = TClassifier(TClassifierParams());
@@ -206,6 +296,7 @@ int main(int argc, char** argv) {
         ArgvParser::OptionRequiresValue);
     cmd.defineOption("train", "Train classifier");
     cmd.defineOption("predict", "Predict dataset");
+    cmd.defineOption("SSE", "Using SSE");
         
         // Add options aliases
     cmd.defineOptionAlternative("data_set", "d");
@@ -213,6 +304,7 @@ int main(int argc, char** argv) {
     cmd.defineOptionAlternative("predicted_labels", "l");
     cmd.defineOptionAlternative("train", "t");
     cmd.defineOptionAlternative("predict", "p");
+    cmd.defineOptionAlternative("SSE", "s");
 
         // Parse options
     int result = cmd.parse(argc, argv);
@@ -228,10 +320,11 @@ int main(int argc, char** argv) {
     string model_file = cmd.optionValue("model");
     bool train = cmd.foundOption("train");
     bool predict = cmd.foundOption("predict");
+    bool sse_flag = cmd.foundOption("SSE");
 
         // If we need to train classifier
     if (train)
-        TrainClassifier(data_file, model_file);
+        TrainClassifier(data_file, model_file, sse_flag);
         // If we need to predict data
     if (predict) {
             // You must declare file to save images
@@ -242,6 +335,6 @@ int main(int argc, char** argv) {
             // File to save predictions
         string prediction_file = cmd.optionValue("predicted_labels");
             // Predict data
-        PredictData(data_file, model_file, prediction_file);
+        PredictData(data_file, model_file, prediction_file, sse_flag);
     }
 }
