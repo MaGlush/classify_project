@@ -119,8 +119,7 @@ public:
 	// cout << a.submatrix(1, 1, 1, 2); // 5 6
 	const Matrix<ValueT> submatrix(uint prow, uint pcol,
 		uint rows, uint cols) const;
-
-private:
+	
 	// Stride - number of elements between two rows (needed for efficient
 	// submatrix function without memory copy)
 	const uint stride;
@@ -132,6 +131,10 @@ private:
 	// so, for now we use shared_ptr just for counting links,
 	// and work with raw pointer through get().
 	std::shared_ptr<ValueT> _data;
+private:
+
+
+
 
 	// Const cast for writing public const fields.
 	template<typename T> inline T& make_rw(const T& val) const;	
